@@ -1,2 +1,2 @@
-idf_component_register(SRCS "bitbang_i2c.c" "main.c"
+idf_component_register(SRCS "lib/manual_gpio.c" "main.c"
                     INCLUDE_DIRS ".")
