@@ -15,6 +15,8 @@
 #define DATA_LENGTH 100
 
 static const char *TAG = "pca9685";
+static const uint32_t NUM_CHANNELS = 16;
+static const uint32_t MAX_COUNT = 4095;
 
 typedef enum {
     MODE1 = 0x00,
@@ -58,15 +60,32 @@ static uint8_t i2c_read_reg(i2c_master_dev_handle_t handle, uint8_t reg) {
     return ret;
 }
 
+// static uint8_t pca9685_channel_to_reg() {
+
+// }
+
+esp_err_t get_counts_from_duty_cycle(double duty_cycle, double phase_delay, uint16_t* on_counts, uint16_t* off_counts) {
+    ESP_RETURN_ON_FALSE(duty_cycle <= 1, ESP_ERR_INVALID_ARG, TAG, "duty cycle must not be greater than 1");
+    ESP_RETURN_ON_FALSE(duty_cycle >= 0, ESP_ERR_INVALID_ARG, TAG, "duty cycle must be positive");
+    ESP_RETURN_ON_FALSE(phase_delay <= 1, ESP_ERR_INVALID_ARG, TAG, "phase delay must not be greater than 1");
+    ESP_RETURN_ON_FALSE(phase_delay >= 0, ESP_ERR_INVALID_ARG, TAG, "phase delay must be positive");
+    *on_counts = (uint16_t)(phase_delay * MAX_COUNT) % 4096;
+    *off_counts = (uint16_t)(duty_cycle * MAX_COUNT + phase_delay * MAX_COUNT) % 4096;
+    return ESP_OK;
+}
+
 // TODO: add more error checking
-esp_err_t set_channel(pca9685_handle_t handle, uint16_t on_counts, uint16_t off_counts) {
+// TODO: figure out proper behavior of high bit 4
+esp_err_t set_channel(pca9685_handle_t handle, uint32_t channel, uint16_t on_counts, uint16_t off_counts) {
     ESP_RETURN_ON_FALSE(on_counts <= 0xfff, ESP_ERR_INVALID_ARG, TAG, "on_counts too large");
     ESP_RETURN_ON_FALSE(off_counts <= 0xfff, ESP_ERR_INVALID_ARG, TAG, "off_counts too large");
-    
-    uint8_t on_low[2] = {LED0_ON_L, (uint8_t) on_counts};
-    uint8_t on_high[2] = {LED0_ON_H, (uint8_t) on_counts>>8};
-    uint8_t off_low[2] = {LED0_OFF_L, (uint8_t) off_counts};
-    uint8_t off_high[2] = {LED0_OFF_H, (uint8_t) off_counts>>8};
+    ESP_RETURN_ON_FALSE(channel < NUM_CHANNELS, ESP_ERR_INVALID_ARG, TAG, "channel out of bounds");
+
+    // TODO: Handle register access more gracefully
+    uint8_t on_low[2] = {LED0_ON_L + channel*4, (uint8_t) on_counts};
+    uint8_t on_high[2] = {LED0_ON_H + channel*4, (uint8_t) (on_counts>>8)};
+    uint8_t off_low[2] = {LED0_OFF_L + channel*4, (uint8_t) off_counts};
+    uint8_t off_high[2] = {LED0_OFF_H + channel*4, (uint8_t) (off_counts>>8)};
 
     i2c_master_transmit(handle->i2c_handle, on_low, 2, -1);
     i2c_master_transmit(handle->i2c_handle, on_high, 2, -1);
@@ -76,3 +95,18 @@ esp_err_t set_channel(pca9685_handle_t handle, uint16_t on_counts, uint16_t off_
 
     return ESP_OK;
 }
+
+esp_err_t set_channel_duty_cycle(pca9685_handle_t handle, uint32_t channel, double duty_cycle, double phase_delay) {
+    ESP_RETURN_ON_FALSE(channel < NUM_CHANNELS, ESP_ERR_INVALID_ARG, TAG, "channel out of bounds");
+    ESP_RETURN_ON_FALSE(duty_cycle <= 1, ESP_ERR_INVALID_ARG, TAG, "duty cycle must not be greater than 1");
+    ESP_RETURN_ON_FALSE(duty_cycle >= 0, ESP_ERR_INVALID_ARG, TAG, "duty cycle must be positive");
+    ESP_RETURN_ON_FALSE(phase_delay <= 1, ESP_ERR_INVALID_ARG, TAG, "phase delay must not be greater than 1");
+    ESP_RETURN_ON_FALSE(phase_delay >= 0, ESP_ERR_INVALID_ARG, TAG, "phase delay must be positive");
+
+    uint16_t on_counts, off_counts;
+    esp_err_t success = get_counts_from_duty_cycle(duty_cycle, phase_delay, &on_counts, &off_counts);
+    ESP_RETURN_ON_FALSE(success == ESP_OK, success, TAG, "failed to calculate cycle counts");
+    
+    return set_channel(handle, channel, on_counts, off_counts);
+}
+
