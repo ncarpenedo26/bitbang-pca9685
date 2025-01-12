@@ -38,7 +38,7 @@ esp_err_t setup_pca9685(i2c_master_bus_handle_t bus_handle, const i2c_device_con
     esp_err_t success = i2c_master_bus_add_device(bus_handle, dev_config, &pca9685_dev->i2c_handle);
     *ret_handle = pca9685_dev;
     
-    uint8_t init_data[2] = {MODE1, 0x00}; // MODE1: Normal mode (no sleep)
+    uint8_t init_data[2] = {MODE1, 0x20}; // MODE1: Normal mode (no sleep)
     esp_err_t err = i2c_master_transmit(pca9685_dev->i2c_handle, init_data, 2, -1);
     if (err != ESP_OK) {
         printf("Failed to initialize MODE1: %d\n", err);
@@ -62,7 +62,10 @@ static uint8_t i2c_read_reg(i2c_master_dev_handle_t handle, uint8_t reg) {
 
 // static uint8_t pca9685_channel_to_reg() {
 
-// }
+// TODO: better error handling
+static uint8_t pca9685_channel_to_base_reg(uint32_t channel) {
+    return LED0_ON_L + (channel * 0x4);
+}
 
 esp_err_t get_counts_from_duty_cycle(double duty_cycle, double phase_delay, uint16_t* on_counts, uint16_t* off_counts) {
     ESP_RETURN_ON_FALSE(duty_cycle <= 1, ESP_ERR_INVALID_ARG, TAG, "duty cycle must not be greater than 1");
@@ -81,17 +84,19 @@ esp_err_t set_channel(pca9685_handle_t handle, uint32_t channel, uint16_t on_cou
     ESP_RETURN_ON_FALSE(off_counts <= 0xfff, ESP_ERR_INVALID_ARG, TAG, "off_counts too large");
     ESP_RETURN_ON_FALSE(channel < NUM_CHANNELS, ESP_ERR_INVALID_ARG, TAG, "channel out of bounds");
 
-    // TODO: Handle register access more gracefully
-    uint8_t on_low[2] = {LED0_ON_L + channel*4, (uint8_t) on_counts};
-    uint8_t on_high[2] = {LED0_ON_H + channel*4, (uint8_t) (on_counts>>8)};
-    uint8_t off_low[2] = {LED0_OFF_L + channel*4, (uint8_t) off_counts};
-    uint8_t off_high[2] = {LED0_OFF_H + channel*4, (uint8_t) (off_counts>>8)};
+    const uint8_t reg = pca9685_channel_to_base_reg(channel);
 
-    i2c_master_transmit(handle->i2c_handle, on_low, 2, -1);
-    i2c_master_transmit(handle->i2c_handle, on_high, 2, -1);
+    uint8_t buffer[5] = {
+        reg,                            // Starting register address (auto-increment enabled)
+        (uint8_t) on_counts,            // ON low byte
+        (uint8_t) (on_counts >> 8),     // ON high byte
+        (uint8_t) off_counts,           // OFF low byte
+        (uint8_t) (off_counts >> 8),    // OFF high byte
+    };
 
-    i2c_master_transmit(handle->i2c_handle, off_low, 2, -1);
-    i2c_master_transmit(handle->i2c_handle, off_high, 2, -1);
+    // Transmit all data in a single I2C transaction
+    i2c_master_transmit(handle->i2c_handle, buffer, sizeof(buffer), -1);
+
 
     return ESP_OK;
 }
