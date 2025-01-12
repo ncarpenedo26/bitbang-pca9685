@@ -139,8 +139,6 @@ static void get_counts_from_duty_cycle(double duty_cycle, double phase_delay, ui
 }
 
 esp_err_t set_channel(pca9685_handle_t handle, uint32_t channel, uint16_t on_counts, uint16_t off_counts) {
-    ESP_RETURN_ON_FALSE(on_counts <= 0xfff, ESP_ERR_INVALID_ARG, TAG, "on_counts too large");
-    ESP_RETURN_ON_FALSE(off_counts <= 0xfff, ESP_ERR_INVALID_ARG, TAG, "off_counts too large");
     ESP_RETURN_ON_FALSE(channel < NUM_CHANNELS, ESP_ERR_INVALID_ARG, TAG, "channel out of bounds");
 
     const uint8_t reg = pca9685_channel_to_base_reg(channel);
@@ -188,4 +186,14 @@ esp_err_t set_channel_pulse_width(pca9685_handle_t handle, uint32_t channel, uin
     double phase_delay = ((double) phase_shift_us) / period_us;
 
     return set_channel_duty_cycle(handle, channel, duty_cycle, phase_delay);
+}
+
+esp_err_t set_channel_on(pca9685_handle_t handle, uint32_t channel) {
+    ESP_RETURN_ON_FALSE(channel < NUM_CHANNELS, ESP_ERR_INVALID_ARG, TAG, "channel out of bounds");
+    return set_channel(handle, channel, 1UL<<12, 0x0);
+}
+
+esp_err_t set_channel_off(pca9685_handle_t handle, uint32_t channel) {
+    ESP_RETURN_ON_FALSE(channel < NUM_CHANNELS, ESP_ERR_INVALID_ARG, TAG, "channel out of bounds");
+    return set_channel(handle, channel, 0x0, 1UL<<12);
 }
