@@ -32,9 +32,34 @@ typedef enum {
     LED0_OFF_L = 0x08,
     LED0_OFF_H = 0x09,
 
+    // LEDK_ON/OFF_L/H omitted for LED1-LED15
+
+    ALL_LED_ON_L = 0xFA,
+    ALL_LED_ON_H = 0xFB,
+    ALL_LED_OFF_L = 0xFC,
+    ALL_LED_OFF_H = 0xFD,
     PRE_SCALE = 0xFE,
-    // TODO: Add more registers
+    TEST_MODE = 0x255,
 } Reg;
+
+typedef enum {
+    RESTART = 1UL << 7,
+    EXTCLK = 1UL << 6,
+    AI = 1UL << 5,
+    SLEEP = 1UL << 4,
+    SUB1 = 1UL << 3,
+    SUB2 = 1UL << 2,
+    SUB3 = 1UL << 1,
+    ALLCALL = 1UL,
+} MODE1_FLAGS;
+
+typedef enum {
+    INVRT = 1UL << 4,
+    OCH = 1UL << 3,
+    OUTDRV = 1UL << 2,
+    OUTNE = 1UL, // Bits [0:1]
+} MODE2_FLAGS;
+
 
 esp_err_t setup_pca9685(i2c_master_bus_handle_t bus_handle, const i2c_device_config_t *dev_config, pca9685_handle_t *ret_handle) {
     pca9685_dev_t *pca9685_dev = heap_caps_calloc(1, sizeof(pca9685_dev_t), MALLOC_CAP_DEFAULT);
