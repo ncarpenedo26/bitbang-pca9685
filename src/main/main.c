@@ -32,12 +32,12 @@ void app_main(void)
 
     pca9685_handle_t pca9685;
     ESP_ERROR_CHECK(setup_pca9685(bus_handle, &dev_cfg, &pca9685));
-    uint32_t count = 0;
+    double count = 0;
     for(;;) {
-        // ESP_ERROR_CHECK(set_channel_duty_cycle(pca9685, 0, count, 0.0));
-        ESP_ERROR_CHECK(set_channel_pulse_width(pca9685, 0, count, 0) );
+        ESP_ERROR_CHECK(set_channel_duty_cycle(pca9685, 0, count, 0.0));
+        // ESP_ERROR_CHECK(set_channel_pulse_width(pca9685, 0, count, 0) );
         vTaskDelay(100 / portTICK_PERIOD_MS);
-        count += 500;
-        if (count > 5000) { count = 0; };
+        count += 0.05;
+        if (count > 1) { count = 0; };
     }
 }
