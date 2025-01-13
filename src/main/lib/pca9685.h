@@ -23,4 +23,9 @@ esp_err_t set_all_pulse_width(pca9685_handle_t handle, uint32_t pulse_width_us, 
 esp_err_t set_all_on(pca9685_handle_t handle); 
 esp_err_t set_all_off(pca9685_handle_t handle);
 
+
+esp_err_t pca9685_sleep(pca9685_handle_t handle);
+esp_err_t pca9685_wake(pca9685_handle_t handle);
+esp_err_t pca9685_restart(pca9685_handle_t handle);
+
 #endif

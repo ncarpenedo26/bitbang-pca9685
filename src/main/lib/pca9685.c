@@ -17,6 +17,7 @@ static const uint32_t NUM_CHANNELS = 16;
 static const uint32_t MAX_COUNT = 4095;
 static const uint32_t INTERNAL_CLOCK_FREQ = 25e6;
 static const int  DEFAULT_TIMEOUT = -1;
+
 static const uint32_t PWM_FREQ_MAX = 1526;
 static const uint32_t PWM_FREQ_MIN = 24;
 static const uint32_t PRE_SCALE_MIN = 0x03;
@@ -252,3 +253,72 @@ esp_err_t set_all_pulse_width(pca9685_handle_t handle, uint32_t pulse_width_us, 
 
     return set_all_duty_cycle(handle, duty_cycle, phase_delay);
 }
+
+static esp_err_t set_bits(pca9685_handle_t handle, uint8_t reg, uint8_t mask) {
+    uint8_t reg_status;
+    esp_err_t err __attribute__((unused));
+    err = i2c_read_reg(handle->i2c_handle, reg, &reg_status);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to read reg %x", reg);
+
+    reg_status |= mask;
+    uint8_t buffer[2] = {reg, reg_status};
+    err = i2c_master_transmit(handle->i2c_handle, buffer, 2, DEFAULT_TIMEOUT);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to write bit %x of reg %x", mask, reg);
+
+    return ESP_OK;
+}
+
+static esp_err_t clear_bits(pca9685_handle_t handle, uint8_t reg, uint8_t mask) {
+    uint8_t reg_status;
+    esp_err_t err __attribute__((unused));
+    err = i2c_read_reg(handle->i2c_handle, reg, &reg_status);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to read reg %x", reg);
+
+    reg_status &= ~mask;
+    uint8_t buffer[2] = {reg, reg_status};
+    err = i2c_master_transmit(handle->i2c_handle, buffer, 2, DEFAULT_TIMEOUT);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to write bit %x of reg %x", mask, reg);
+
+    return ESP_OK;
+}
+
+esp_err_t pca9685_sleep(pca9685_handle_t handle) {
+    return set_bits(handle, MODE1, SLEEP);
+}
+
+esp_err_t pca9685_wake(pca9685_handle_t handle) {
+    return clear_bits(handle, MODE1, SLEEP);
+}
+
+esp_err_t pca9685_restart(pca9685_handle_t handle) {
+    uint8_t mode1_status;
+    esp_err_t err __attribute__((unused));
+
+    err = i2c_read_reg(handle->i2c_handle, MODE1, &mode1_status);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to read pca9685");
+
+    bool restart_logic_high = mode1_status & RESTART;
+    if (!restart_logic_high) {
+        return ESP_OK;
+    }
+
+    err = clear_bits(handle, MODE1, SLEEP);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to clear sleep bit");
+
+    vTaskDelay(1 / portTICK_PERIOD_MS);
+   
+    err = set_bits(handle, MODE1, RESTART);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to restart pca9685");
+
+    return ESP_OK;
+}
+
+
+
+// get/set output driver mode
+// get/set output disabled mode
+// get/set output enabled mode
+// get/set channel update mode
+// enable/disable all call address
+// enable/disable sub123 addresses
+// enable/disable ext clock line

@@ -28,6 +28,8 @@
         "span": "c",
         "vector": "c",
         "xstring": "c",
-        "xutility": "c"
+        "xutility": "c",
+        "i2c_master.h": "c",
+        "task.h": "c"
     }
 }
