@@ -28,5 +28,21 @@ esp_err_t pca9685_sleep(pca9685_handle_t handle);
 esp_err_t pca9685_wake(pca9685_handle_t handle);
 esp_err_t pca9685_restart(pca9685_handle_t handle);
 esp_err_t pca9685_use_extclk(pca9685_handle_t handle);
+esp_err_t pca9685_set_prescale(pca9685_handle_t handle, uint8_t prescale);
+esp_err_t pca9685_set_freq(pca9685_handle_t handle, uint32_t freq);
+
+esp_err_t pca9685_set_inverted(pca9685_handle_t handle);
+esp_err_t pca9685_set_not_inverted(pca9685_handle_t handle);
+esp_err_t pca9685_config_open_drain(pca9685_handle_t handle);
+esp_err_t pca9685_config_totem_pole(pca9685_handle_t handle);
+
+esp_err_t pca9685_enable_all_call(pca9685_handle_t handle, uint8_t all_call_addr);
+esp_err_t pca9685_disable_all_call(pca9685_handle_t handle);
+esp_err_t pca9685_enable_sub1(pca9685_handle_t handle, uint8_t sub1_addr);
+esp_err_t pca9685_disable_sub1(pca9685_handle_t handle);
+esp_err_t pca9685_enable_sub2(pca9685_handle_t handle, uint8_t sub2_addr);
+esp_err_t pca9685_disable_sub2(pca9685_handle_t handle);
+esp_err_t pca9685_enable_sub3(pca9685_handle_t handle, uint8_t sub3_addr);
+esp_err_t pca9685_disable_sub3(pca9685_handle_t handle);
 
 #endif

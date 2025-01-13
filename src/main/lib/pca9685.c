@@ -12,16 +12,17 @@
 #include "esp_attr.h"
 #include "esp_check.h"
 
-static const char *TAG = "pca9685";
-static const uint32_t NUM_CHANNELS = 16;
-static const uint32_t MAX_COUNT = 4095;
-static const uint32_t INTERNAL_CLOCK_FREQ = 25e6;
-static const int  DEFAULT_TIMEOUT = -1;
+#define NUM_CHANNELS 16
+#define MAX_COUNT 4095
+#define INTERNAL_CLOCK_FREQ 25e6
+#define DEFAULT_TIMEOUT -1
 
-static const uint32_t PWM_FREQ_MAX = 1526;
-static const uint32_t PWM_FREQ_MIN = 24;
-static const uint32_t PRE_SCALE_MIN = 0x03;
-static const uint32_t PRE_SCALE_MAX = 0xFF;
+#define PWM_FREQ_MAX 1526
+#define PWM_FREQ_MIN 24
+#define PRE_SCALE_MIN 0x03
+#define PRE_SCALE_MAX 0xFF
+
+static const char *TAG = "pca9685";
 
 typedef enum {
     MODE1 = 0x00,
@@ -54,31 +55,33 @@ typedef enum {
     SUB2 = 1UL << 2,
     SUB3 = 1UL << 1,
     ALLCALL = 1UL,
-} MODE1_FLAGS;
-
-static const uint8_t DEFAULT_MODE1_CONFIG = AI | ALLCALL;
+} MODE1_BITS;
 
 typedef enum {
     INVRT = 1UL << 4,
     OCH = 1UL << 3,
     OUTDRV = 1UL << 2,
-    OUTNE = 1UL, // Bits [0:1]
-} MODE2_FLAGS;
+    OUTNE = 3, // first 2 lsb
+} MODE2_BITS;
 
+static const uint8_t DEFAULT_MODE1_CONFIG = AI | ALLCALL;
+
+// TODO: Add helper function that wrapse i2c_master_transmit
 
 esp_err_t setup_pca9685(i2c_master_bus_handle_t bus_handle, const i2c_device_config_t *dev_config, pca9685_handle_t *ret_handle) {
     pca9685_dev_t *pca9685_dev = heap_caps_calloc(1, sizeof(pca9685_dev_t), MALLOC_CAP_DEFAULT);
     ESP_RETURN_ON_FALSE((bus_handle != NULL), ESP_ERR_NO_MEM, TAG, "insufficient memory for pca9685");
+
     esp_err_t err __attribute__((unused));
     err = i2c_master_bus_add_device(bus_handle, dev_config, &pca9685_dev->i2c_handle);
     ESP_RETURN_ON_ERROR(err, TAG, "failed to add pca9685 to i2c bus");
-    
-    *ret_handle = pca9685_dev;
     
     uint8_t init_data[2] = {MODE1, DEFAULT_MODE1_CONFIG};
     err = i2c_master_transmit(pca9685_dev->i2c_handle, init_data, 2, DEFAULT_TIMEOUT);
     ESP_RETURN_ON_ERROR(err, TAG, "failed to configure pca9685");
 
+    *ret_handle = pca9685_dev;
+    
     return ESP_OK;
 }
 
@@ -95,7 +98,6 @@ static esp_err_t i2c_read_reg(i2c_master_dev_handle_t handle, uint8_t reg, uint8
     return ESP_OK;
 }
 
-// The PRE_SCALE register can only be set when the SLEEP bit of MODE1 register is set to logic 1.
 static uint8_t freq_to_prescale(uint32_t freq) {
     assert(freq <= PWM_FREQ_MAX);
     assert(freq >= PWM_FREQ_MIN);
@@ -106,22 +108,6 @@ static uint32_t prescale_to_freq(uint8_t prescale) {
     assert(prescale >= PRE_SCALE_MIN);
     assert(prescale <= PRE_SCALE_MAX);
     return INTERNAL_CLOCK_FREQ / (MAX_COUNT * (prescale + 1));
-}
-
-esp_err_t pca9685_get_prescale(pca9685_handle_t handle, uint8_t* prescale) {
-    esp_err_t err __attribute__((unused));
-    err = i2c_read_reg(handle->i2c_handle, PRE_SCALE, prescale);
-    ESP_RETURN_ON_ERROR(err, TAG, "failed to reach pca9685");
-    return ESP_OK;
-}
-
-esp_err_t pca9685_get_freq(pca9685_handle_t handle, uint32_t* freq) {
-    uint8_t prescale;
-    esp_err_t err __attribute__((unused));
-    err = pca9685_get_prescale(handle, &prescale);
-    ESP_RETURN_ON_ERROR(err, TAG, "failed to read prescale from pca9685");
-    *freq = prescale_to_freq(prescale);
-    return ESP_OK;
 }
 
 static uint8_t pca9685_channel_to_base_reg(uint32_t channel) {
@@ -137,6 +123,32 @@ static void get_counts_from_duty_cycle(double duty_cycle, double phase_delay, ui
 
     *on_counts = (uint16_t)(phase_delay * MAX_COUNT) % 4096;
     *off_counts = (uint16_t)(duty_cycle * MAX_COUNT + phase_delay * MAX_COUNT) % 4096;
+}
+
+esp_err_t pca9685_get_prescale(pca9685_handle_t handle, uint8_t* prescale) {
+    esp_err_t err __attribute__((unused));
+    err = i2c_read_reg(handle->i2c_handle, PRE_SCALE, prescale);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to reach pca9685");
+    return ESP_OK;
+}
+
+esp_err_t pca9685_set_prescale(pca9685_handle_t handle, uint8_t prescale) {
+    uint8_t buffer[2] = {PRE_SCALE, prescale};
+    return i2c_master_transmit(handle->i2c_handle, buffer, 2, DEFAULT_TIMEOUT);
+}
+
+
+esp_err_t pca9685_set_freq(pca9685_handle_t handle, uint32_t freq) {
+    return pca9685_set_prescale(handle, freq_to_prescale(freq));
+}
+
+esp_err_t pca9685_get_freq(pca9685_handle_t handle, uint32_t* freq) {
+    uint8_t prescale;
+    esp_err_t err __attribute__((unused));
+    err = pca9685_get_prescale(handle, &prescale);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to read prescale from pca9685");
+    *freq = prescale_to_freq(prescale);
+    return ESP_OK;
 }
 
 esp_err_t set_channel(pca9685_handle_t handle, uint32_t channel, uint16_t on_counts, uint16_t off_counts) {
@@ -321,17 +333,97 @@ esp_err_t pca9685_use_extclk(pca9685_handle_t handle) {
 
     err = set_bits(handle, MODE1, SLEEP | EXTCLK);
     ESP_RETURN_ON_ERROR(err, TAG, "failed to set bits");
-    
+
     err = clear_bits(handle, MODE1, SLEEP);
     ESP_RETURN_ON_ERROR(err, TAG, "failed to set bits");
     
     return ESP_OK;
 }
 
+esp_err_t pca9685_set_inverted(pca9685_handle_t handle) {
+    return set_bits(handle, MODE2, INVRT);
+}
+
+esp_err_t pca9685_set_not_inverted(pca9685_handle_t handle) {
+    return clear_bits(handle, MODE2, INVRT);
+}
+
+esp_err_t pca9685_config_open_drain(pca9685_handle_t handle) {
+    return clear_bits(handle, MODE2, OCH);
+}
+
+esp_err_t pca9685_config_totem_pole(pca9685_handle_t handle) {
+    return set_bits(handle, MODE2, OCH);
+}
+
+esp_err_t pca9685_enable_all_call(pca9685_handle_t handle, uint8_t all_call_addr) {
+    esp_err_t err __attribute__((unused));
+
+    err = set_bits(handle, MODE1, ALLCALL);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to set bits");
+
+    uint8_t buffer[2] = {ALLCALLADR, all_call_addr};
+    err = i2c_master_transmit(handle->i2c_handle, buffer, 2, DEFAULT_TIMEOUT);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to write address");
+
+    return ESP_OK;
+}
+
+esp_err_t pca9685_disable_all_call(pca9685_handle_t handle) {
+    return clear_bits(handle, MODE1, ALLCALL);
+}
+
+esp_err_t pca9685_enable_sub1(pca9685_handle_t handle, uint8_t sub1_addr) {
+    esp_err_t err __attribute__((unused));
+
+    err = set_bits(handle, MODE1, SUB1);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to set bits");
+
+    uint8_t buffer[2] = {SUBADR1, sub1_addr};
+    err = i2c_master_transmit(handle->i2c_handle, buffer, 2, DEFAULT_TIMEOUT);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to write address");
+
+    return ESP_OK;
+}
+
+esp_err_t pca9685_disable_sub1(pca9685_handle_t handle) {
+    return clear_bits(handle, MODE1, SUB1);
+}
+
+esp_err_t pca9685_enable_sub2(pca9685_handle_t handle, uint8_t sub2_addr) {
+    esp_err_t err __attribute__((unused));
+
+    err = set_bits(handle, MODE1, SUB2);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to set bits");
+
+    uint8_t buffer[2] = {SUBADR2, sub2_addr};
+    err = i2c_master_transmit(handle->i2c_handle, buffer, 2, DEFAULT_TIMEOUT);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to write address");
+
+    return ESP_OK;
+}
+
+esp_err_t pca9685_disable_sub2(pca9685_handle_t handle) {
+    return clear_bits(handle, MODE1, SUB2);
+}
+
+esp_err_t pca9685_enable_sub3(pca9685_handle_t handle, uint8_t sub3_addr) {
+    esp_err_t err __attribute__((unused));
+
+    err = set_bits(handle, MODE1, SUB3);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to set bits");
+
+    uint8_t buffer[2] = {SUBADR3, sub3_addr};
+    err = i2c_master_transmit(handle->i2c_handle, buffer, 2, DEFAULT_TIMEOUT);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to write address");
+
+    return ESP_OK;
+}
+
+esp_err_t pca9685_disable_sub3(pca9685_handle_t handle) {
+    return clear_bits(handle, MODE1, SUB3);
+}
+
 // get/set output driver mode
-// get/set output disabled mode
-// get/set output enabled mode
-// get/set channel update mode
-// enable/disable all call address
-// enable/disable sub123 addresses
-// enable/disable ext clock line
+// get/set channel update mode (OCH)
+// get/set OUTNE
