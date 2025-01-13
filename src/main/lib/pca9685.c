@@ -197,3 +197,58 @@ esp_err_t set_channel_off(pca9685_handle_t handle, uint32_t channel) {
     ESP_RETURN_ON_FALSE(channel < NUM_CHANNELS, ESP_ERR_INVALID_ARG, TAG, "channel out of bounds");
     return set_channel(handle, channel, 0x0, 1UL<<12);
 }
+
+esp_err_t set_all(pca9685_handle_t handle, uint16_t on_counts, uint16_t off_counts) {
+    const uint8_t reg = ALL_LED_ON_L;
+
+    uint8_t buffer[5] = {
+        reg,                            // Starting register address (auto-increment enabled)
+        (uint8_t) on_counts,            // ON low byte
+        (uint8_t) (on_counts >> 8),     // ON high byte
+        (uint8_t) off_counts,           // OFF low byte
+        (uint8_t) (off_counts >> 8),    // OFF high byte
+    };
+
+    // Transmit all data in a single I2C transaction
+    esp_err_t err __attribute__((unused));
+    err = i2c_master_transmit(handle->i2c_handle, buffer, sizeof(buffer), -1);
+    ESP_RETURN_ON_ERROR(err, TAG, "i2c master transmit failed");
+
+    return ESP_OK;
+}
+
+esp_err_t set_all_on(pca9685_handle_t handle) {
+    return set_all(handle, 1UL<<12, 0x0);
+}
+
+esp_err_t set_all_off(pca9685_handle_t handle) {
+    return set_all(handle, 0x0, 1UL<<12);
+}
+
+esp_err_t set_all_duty_cycle(pca9685_handle_t handle, double duty_cycle, double phase_delay) {
+    ESP_RETURN_ON_FALSE(duty_cycle <= 1, ESP_ERR_INVALID_ARG, TAG, "duty cycle must not be greater than 1");
+    ESP_RETURN_ON_FALSE(duty_cycle >= 0, ESP_ERR_INVALID_ARG, TAG, "duty cycle must be positive");
+    ESP_RETURN_ON_FALSE(phase_delay <= 1, ESP_ERR_INVALID_ARG, TAG, "phase delay must not be greater than 1");
+    ESP_RETURN_ON_FALSE(phase_delay >= 0, ESP_ERR_INVALID_ARG, TAG, "phase delay must be positive");
+
+    uint16_t on_counts, off_counts;
+    get_counts_from_duty_cycle(duty_cycle, phase_delay, &on_counts, &off_counts);
+
+    return set_all(handle, on_counts, off_counts);
+}
+
+esp_err_t set_all_pulse_width(pca9685_handle_t handle, uint32_t pulse_width_us, uint32_t phase_shift_us) {
+    uint32_t freq;
+    esp_err_t err __attribute__((unused));
+    err = pca9685_get_freq(handle, &freq);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to read pca9685 frequency");
+    double period_us = (1 / ((double) freq)) * 1e6;
+
+    ESP_RETURN_ON_FALSE(pulse_width_us <= period_us, ESP_ERR_INVALID_ARG, TAG, "pulse width must be less than PWM period.");
+    ESP_RETURN_ON_FALSE(phase_shift_us <= period_us, ESP_ERR_INVALID_ARG, TAG, "phase shift must be less than PWM period.");
+
+    double duty_cycle = ((double) pulse_width_us) / period_us;
+    double phase_delay = ((double) phase_shift_us) / period_us;
+
+    return set_all_duty_cycle(handle, duty_cycle, phase_delay);
+}
