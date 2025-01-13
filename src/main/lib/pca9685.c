@@ -44,7 +44,7 @@ typedef enum {
     ALL_LED_OFF_H = 0xFD,
     PRE_SCALE = 0xFE,
     TEST_MODE = 0x255,
-} Reg;
+} PCA9685_REG;
 
 typedef enum {
     RESTART = 1UL << 7,
@@ -66,26 +66,7 @@ typedef enum {
 
 static const uint8_t DEFAULT_MODE1_CONFIG = AI | ALLCALL;
 
-// TODO: Add helper function that wrapse i2c_master_transmit
-
-esp_err_t setup_pca9685(i2c_master_bus_handle_t bus_handle, const i2c_device_config_t *dev_config, pca9685_handle_t *ret_handle) {
-    pca9685_dev_t *pca9685_dev = heap_caps_calloc(1, sizeof(pca9685_dev_t), MALLOC_CAP_DEFAULT);
-    ESP_RETURN_ON_FALSE((bus_handle != NULL), ESP_ERR_NO_MEM, TAG, "insufficient memory for pca9685");
-
-    esp_err_t err __attribute__((unused));
-    err = i2c_master_bus_add_device(bus_handle, dev_config, &pca9685_dev->i2c_handle);
-    ESP_RETURN_ON_ERROR(err, TAG, "failed to add pca9685 to i2c bus");
-    
-    uint8_t init_data[2] = {MODE1, DEFAULT_MODE1_CONFIG};
-    err = i2c_master_transmit(pca9685_dev->i2c_handle, init_data, 2, DEFAULT_TIMEOUT);
-    ESP_RETURN_ON_ERROR(err, TAG, "failed to configure pca9685");
-
-    *ret_handle = pca9685_dev;
-    
-    return ESP_OK;
-}
-
-static esp_err_t i2c_read_reg(i2c_master_dev_handle_t handle, uint8_t reg, uint8_t* reg_val) {
+static esp_err_t i2c_read_reg(i2c_master_dev_handle_t handle, const uint8_t reg, uint8_t* reg_val) {
     // Write to the register
     esp_err_t err __attribute__((unused));
     err = i2c_master_transmit(handle, &reg, 1, DEFAULT_TIMEOUT);
@@ -96,174 +77,6 @@ static esp_err_t i2c_read_reg(i2c_master_dev_handle_t handle, uint8_t reg, uint8
     ESP_RETURN_ON_ERROR(err, TAG, "failed to reach pca9685");
     
     return ESP_OK;
-}
-
-static uint8_t freq_to_prescale(uint32_t freq) {
-    assert(freq <= PWM_FREQ_MAX);
-    assert(freq >= PWM_FREQ_MIN);
-    return INTERNAL_CLOCK_FREQ / (MAX_COUNT * freq) - 1;
-}
-
-static uint32_t prescale_to_freq(uint8_t prescale) {
-    assert(prescale >= PRE_SCALE_MIN);
-    assert(prescale <= PRE_SCALE_MAX);
-    return INTERNAL_CLOCK_FREQ / (MAX_COUNT * (prescale + 1));
-}
-
-static uint8_t pca9685_channel_to_base_reg(uint32_t channel) {
-    assert(channel < NUM_CHANNELS);
-    return LED0_ON_L + (channel * 0x4);
-}
-
-static void get_counts_from_duty_cycle(double duty_cycle, double phase_delay, uint16_t* on_counts, uint16_t* off_counts) {
-    assert(duty_cycle <= 1); 
-    assert(duty_cycle >= 0); 
-    assert(phase_delay <= 1);
-    assert(phase_delay >= 0);
-
-    *on_counts = (uint16_t)(phase_delay * MAX_COUNT) % 4096;
-    *off_counts = (uint16_t)(duty_cycle * MAX_COUNT + phase_delay * MAX_COUNT) % 4096;
-}
-
-esp_err_t pca9685_get_prescale(pca9685_handle_t handle, uint8_t* prescale) {
-    esp_err_t err __attribute__((unused));
-    err = i2c_read_reg(handle->i2c_handle, PRE_SCALE, prescale);
-    ESP_RETURN_ON_ERROR(err, TAG, "failed to reach pca9685");
-    return ESP_OK;
-}
-
-esp_err_t pca9685_set_prescale(pca9685_handle_t handle, uint8_t prescale) {
-    uint8_t buffer[2] = {PRE_SCALE, prescale};
-    return i2c_master_transmit(handle->i2c_handle, buffer, 2, DEFAULT_TIMEOUT);
-}
-
-
-esp_err_t pca9685_set_freq(pca9685_handle_t handle, uint32_t freq) {
-    return pca9685_set_prescale(handle, freq_to_prescale(freq));
-}
-
-esp_err_t pca9685_get_freq(pca9685_handle_t handle, uint32_t* freq) {
-    uint8_t prescale;
-    esp_err_t err __attribute__((unused));
-    err = pca9685_get_prescale(handle, &prescale);
-    ESP_RETURN_ON_ERROR(err, TAG, "failed to read prescale from pca9685");
-    *freq = prescale_to_freq(prescale);
-    return ESP_OK;
-}
-
-esp_err_t set_channel(pca9685_handle_t handle, uint32_t channel, uint16_t on_counts, uint16_t off_counts) {
-    ESP_RETURN_ON_FALSE(channel < NUM_CHANNELS, ESP_ERR_INVALID_ARG, TAG, "channel out of bounds");
-
-    const uint8_t reg = pca9685_channel_to_base_reg(channel);
-
-    uint8_t buffer[5] = {
-        reg,                            // Starting register address (auto-increment enabled)
-        (uint8_t) on_counts,            // ON low byte
-        (uint8_t) (on_counts >> 8),     // ON high byte
-        (uint8_t) off_counts,           // OFF low byte
-        (uint8_t) (off_counts >> 8),    // OFF high byte
-    };
-
-    // Transmit all data in a single I2C transaction
-    esp_err_t err __attribute__((unused));
-    err = i2c_master_transmit(handle->i2c_handle, buffer, sizeof(buffer), -1);
-    ESP_RETURN_ON_ERROR(err, TAG, "i2c master transmit failed");
-
-    return ESP_OK;
-}
-
-esp_err_t set_channel_duty_cycle(pca9685_handle_t handle, uint32_t channel, double duty_cycle, double phase_delay) {
-    ESP_RETURN_ON_FALSE(channel < NUM_CHANNELS, ESP_ERR_INVALID_ARG, TAG, "channel out of bounds");
-    ESP_RETURN_ON_FALSE(duty_cycle <= 1, ESP_ERR_INVALID_ARG, TAG, "duty cycle must not be greater than 1");
-    ESP_RETURN_ON_FALSE(duty_cycle >= 0, ESP_ERR_INVALID_ARG, TAG, "duty cycle must be positive");
-    ESP_RETURN_ON_FALSE(phase_delay <= 1, ESP_ERR_INVALID_ARG, TAG, "phase delay must not be greater than 1");
-    ESP_RETURN_ON_FALSE(phase_delay >= 0, ESP_ERR_INVALID_ARG, TAG, "phase delay must be positive");
-
-    uint16_t on_counts, off_counts;
-    get_counts_from_duty_cycle(duty_cycle, phase_delay, &on_counts, &off_counts);
-
-    return set_channel(handle, channel, on_counts, off_counts);
-}
-
-esp_err_t set_channel_pulse_width(pca9685_handle_t handle, uint32_t channel, uint32_t pulse_width_us, uint32_t phase_shift_us) {
-    uint32_t freq;
-    esp_err_t err __attribute__((unused));
-    err = pca9685_get_freq(handle, &freq);
-    ESP_RETURN_ON_ERROR(err, TAG, "failed to read pca9685 frequency");
-    double period_us = (1 / ((double) freq)) * 1e6;
-
-    ESP_RETURN_ON_FALSE(pulse_width_us <= period_us, ESP_ERR_INVALID_ARG, TAG, "pulse width must be less than PWM period.");
-    ESP_RETURN_ON_FALSE(phase_shift_us <= period_us, ESP_ERR_INVALID_ARG, TAG, "phase shift must be less than PWM period.");
-
-    double duty_cycle = ((double) pulse_width_us) / period_us;
-    double phase_delay = ((double) phase_shift_us) / period_us;
-
-    return set_channel_duty_cycle(handle, channel, duty_cycle, phase_delay);
-}
-
-esp_err_t set_channel_on(pca9685_handle_t handle, uint32_t channel) {
-    ESP_RETURN_ON_FALSE(channel < NUM_CHANNELS, ESP_ERR_INVALID_ARG, TAG, "channel out of bounds");
-    return set_channel(handle, channel, 1UL<<12, 0x0);
-}
-
-esp_err_t set_channel_off(pca9685_handle_t handle, uint32_t channel) {
-    ESP_RETURN_ON_FALSE(channel < NUM_CHANNELS, ESP_ERR_INVALID_ARG, TAG, "channel out of bounds");
-    return set_channel(handle, channel, 0x0, 1UL<<12);
-}
-
-esp_err_t set_all(pca9685_handle_t handle, uint16_t on_counts, uint16_t off_counts) {
-    const uint8_t reg = ALL_LED_ON_L;
-
-    uint8_t buffer[5] = {
-        reg,                            // Starting register address (auto-increment enabled)
-        (uint8_t) on_counts,            // ON low byte
-        (uint8_t) (on_counts >> 8),     // ON high byte
-        (uint8_t) off_counts,           // OFF low byte
-        (uint8_t) (off_counts >> 8),    // OFF high byte
-    };
-
-    // Transmit all data in a single I2C transaction
-    esp_err_t err __attribute__((unused));
-    err = i2c_master_transmit(handle->i2c_handle, buffer, sizeof(buffer), -1);
-    ESP_RETURN_ON_ERROR(err, TAG, "i2c master transmit failed");
-
-    return ESP_OK;
-}
-
-esp_err_t set_all_on(pca9685_handle_t handle) {
-    return set_all(handle, 1UL<<12, 0x0);
-}
-
-esp_err_t set_all_off(pca9685_handle_t handle) {
-    return set_all(handle, 0x0, 1UL<<12);
-}
-
-esp_err_t set_all_duty_cycle(pca9685_handle_t handle, double duty_cycle, double phase_delay) {
-    ESP_RETURN_ON_FALSE(duty_cycle <= 1, ESP_ERR_INVALID_ARG, TAG, "duty cycle must not be greater than 1");
-    ESP_RETURN_ON_FALSE(duty_cycle >= 0, ESP_ERR_INVALID_ARG, TAG, "duty cycle must be positive");
-    ESP_RETURN_ON_FALSE(phase_delay <= 1, ESP_ERR_INVALID_ARG, TAG, "phase delay must not be greater than 1");
-    ESP_RETURN_ON_FALSE(phase_delay >= 0, ESP_ERR_INVALID_ARG, TAG, "phase delay must be positive");
-
-    uint16_t on_counts, off_counts;
-    get_counts_from_duty_cycle(duty_cycle, phase_delay, &on_counts, &off_counts);
-
-    return set_all(handle, on_counts, off_counts);
-}
-
-esp_err_t set_all_pulse_width(pca9685_handle_t handle, uint32_t pulse_width_us, uint32_t phase_shift_us) {
-    uint32_t freq;
-    esp_err_t err __attribute__((unused));
-    err = pca9685_get_freq(handle, &freq);
-    ESP_RETURN_ON_ERROR(err, TAG, "failed to read pca9685 frequency");
-    double period_us = (1 / ((double) freq)) * 1e6;
-
-    ESP_RETURN_ON_FALSE(pulse_width_us <= period_us, ESP_ERR_INVALID_ARG, TAG, "pulse width must be less than PWM period.");
-    ESP_RETURN_ON_FALSE(phase_shift_us <= period_us, ESP_ERR_INVALID_ARG, TAG, "phase shift must be less than PWM period.");
-
-    double duty_cycle = ((double) pulse_width_us) / period_us;
-    double phase_delay = ((double) phase_shift_us) / period_us;
-
-    return set_all_duty_cycle(handle, duty_cycle, phase_delay);
 }
 
 static esp_err_t set_bits(pca9685_handle_t handle, uint8_t reg, uint8_t mask) {
@@ -293,12 +106,179 @@ static esp_err_t clear_bits(pca9685_handle_t handle, uint8_t reg, uint8_t mask) 
 
     return ESP_OK;
 }
+static uint8_t freq_to_prescale(uint32_t freq) {
+    assert(freq <= PWM_FREQ_MAX);
+    assert(freq >= PWM_FREQ_MIN);
+    return INTERNAL_CLOCK_FREQ / (MAX_COUNT * freq) - 1;
+}
 
-esp_err_t pca9685_sleep(pca9685_handle_t handle) {
+static uint32_t prescale_to_freq(uint8_t prescale) {
+    assert(prescale >= PRE_SCALE_MIN);
+    assert(prescale <= PRE_SCALE_MAX);
+    return INTERNAL_CLOCK_FREQ / (MAX_COUNT * (prescale + 1));
+}
+
+static uint8_t pca9685_channel_to_base_reg(uint32_t channel) {
+    assert(channel < NUM_CHANNELS);
+    return LED0_ON_L + (channel * 0x4);
+}
+
+static void get_counts_from_duty_cycle(double duty_cycle, double phase_delay, uint16_t* on_counts, uint16_t* off_counts) {
+    assert(duty_cycle <= 1); 
+    assert(duty_cycle >= 0); 
+    assert(phase_delay <= 1);
+    assert(phase_delay >= 0);
+
+    *on_counts = (uint16_t)(phase_delay * MAX_COUNT) % 4096;
+    *off_counts = (uint16_t)(duty_cycle * MAX_COUNT + phase_delay * MAX_COUNT) % 4096;
+}
+
+esp_err_t pca9685_init(i2c_master_bus_handle_t bus_handle, const i2c_device_config_t *dev_config, pca9685_handle_t *ret_handle) {
+    pca9685_dev_t *pca9685_dev = heap_caps_calloc(1, sizeof(pca9685_dev_t), MALLOC_CAP_DEFAULT);
+    ESP_RETURN_ON_FALSE((bus_handle != NULL), ESP_ERR_NO_MEM, TAG, "insufficient memory for pca9685");
+
+    esp_err_t err __attribute__((unused));
+    err = i2c_master_bus_add_device(bus_handle, dev_config, &pca9685_dev->i2c_handle);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to add pca9685 to i2c bus");
+    
+    uint8_t init_data[2] = {MODE1, DEFAULT_MODE1_CONFIG};
+    err = i2c_master_transmit(pca9685_dev->i2c_handle, init_data, 2, DEFAULT_TIMEOUT);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to configure pca9685");
+
+    *ret_handle = pca9685_dev;
+    
+    return ESP_OK;
+}
+
+esp_err_t pca9685_get_prescale(pca9685_handle_t handle, uint8_t* prescale) {
+    esp_err_t err __attribute__((unused));
+    err = i2c_read_reg(handle->i2c_handle, PRE_SCALE, prescale);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to reach pca9685");
+    return ESP_OK;
+}
+
+esp_err_t pca9685_set_prescale(pca9685_handle_t handle, uint8_t prescale) {
+    uint8_t buffer[2] = {PRE_SCALE, prescale};
+    return i2c_master_transmit(handle->i2c_handle, buffer, 2, DEFAULT_TIMEOUT);
+}
+
+esp_err_t pca9685_get_freq(pca9685_handle_t handle, uint32_t* freq) {
+    uint8_t prescale;
+    esp_err_t err __attribute__((unused));
+    err = pca9685_get_prescale(handle, &prescale);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to read prescale from pca9685");
+    *freq = prescale_to_freq(prescale);
+    return ESP_OK;
+}
+
+esp_err_t pca9685_set_freq(pca9685_handle_t handle, uint32_t freq) {
+    return pca9685_set_prescale(handle, freq_to_prescale(freq));
+}
+
+static esp_err_t i2c_write_counts_to_reg(pca9685_handle_t handle, PCA9685_REG reg, uint16_t on_counts, uint16_t off_counts) {
+    uint8_t buffer[5] = {
+        reg,                            // Starting register address (auto-increment enabled)
+        (uint8_t) on_counts,            // ON low byte
+        (uint8_t) (on_counts >> 8),     // ON high byte
+        (uint8_t) off_counts,           // OFF low byte
+        (uint8_t) (off_counts >> 8),    // OFF high byte
+    };
+
+    // Transmit all data in a single I2C transaction
+    return i2c_master_transmit(handle->i2c_handle, buffer, sizeof(buffer), -1);
+}
+
+static esp_err_t set_channel(pca9685_handle_t handle, uint32_t channel, uint16_t on_counts, uint16_t off_counts) {
+    ESP_RETURN_ON_FALSE(channel < NUM_CHANNELS, ESP_ERR_INVALID_ARG, TAG, "channel out of bounds");
+    const uint8_t reg = pca9685_channel_to_base_reg(channel);
+    return i2c_write_counts_to_reg(handle, reg, on_counts, off_counts);
+}
+
+esp_err_t pca9685_set_duty_cycle(pca9685_handle_t handle, uint32_t channel, double duty_cycle, double phase_delay) {
+    ESP_RETURN_ON_FALSE(channel < NUM_CHANNELS, ESP_ERR_INVALID_ARG, TAG, "channel out of bounds");
+    ESP_RETURN_ON_FALSE(duty_cycle <= 1, ESP_ERR_INVALID_ARG, TAG, "duty cycle must not be greater than 1");
+    ESP_RETURN_ON_FALSE(duty_cycle >= 0, ESP_ERR_INVALID_ARG, TAG, "duty cycle must be positive");
+    ESP_RETURN_ON_FALSE(phase_delay <= 1, ESP_ERR_INVALID_ARG, TAG, "phase delay must not be greater than 1");
+    ESP_RETURN_ON_FALSE(phase_delay >= 0, ESP_ERR_INVALID_ARG, TAG, "phase delay must be positive");
+
+    uint16_t on_counts, off_counts;
+    get_counts_from_duty_cycle(duty_cycle, phase_delay, &on_counts, &off_counts);
+
+    return set_channel(handle, channel, on_counts, off_counts);
+}
+
+esp_err_t pca9685_set_pulse_width(pca9685_handle_t handle, uint32_t channel, uint32_t pulse_width_us, uint32_t phase_shift_us) {
+    uint32_t freq;
+    esp_err_t err __attribute__((unused));
+    err = pca9685_get_freq(handle, &freq);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to read pca9685 frequency");
+
+    double period_us = (1 / ((double) freq)) * 1e6;
+
+    ESP_RETURN_ON_FALSE(pulse_width_us <= period_us, ESP_ERR_INVALID_ARG, TAG, "pulse width must be less than PWM period.");
+    ESP_RETURN_ON_FALSE(phase_shift_us <= period_us, ESP_ERR_INVALID_ARG, TAG, "phase shift must be less than PWM period.");
+
+    double duty_cycle = ((double) pulse_width_us) / period_us;
+    double phase_delay = ((double) phase_shift_us) / period_us;
+
+    return pca9685_set_duty_cycle(handle, channel, duty_cycle, phase_delay);
+}
+
+esp_err_t pca9685_set_channel_on(pca9685_handle_t handle, uint32_t channel) {
+    ESP_RETURN_ON_FALSE(channel < NUM_CHANNELS, ESP_ERR_INVALID_ARG, TAG, "channel out of bounds");
+    return set_channel(handle, channel, 1UL<<12, 0x0);
+}
+
+esp_err_t pca9685_set_channel_off(pca9685_handle_t handle, uint32_t channel) {
+    ESP_RETURN_ON_FALSE(channel < NUM_CHANNELS, ESP_ERR_INVALID_ARG, TAG, "channel out of bounds");
+    return set_channel(handle, channel, 0x0, 1UL<<12);
+}
+
+static esp_err_t set_all(pca9685_handle_t handle, uint16_t on_counts, uint16_t off_counts) {
+    return i2c_write_counts_to_reg(handle, ALL_LED_ON_L, on_counts, off_counts);
+}
+
+esp_err_t pca9685_set_all_on(pca9685_handle_t handle) {
+    return set_all(handle, 1UL<<12, 0x0);
+}
+
+esp_err_t pca9685_set_all_off(pca9685_handle_t handle) {
+    return set_all(handle, 0x0, 1UL<<12);
+}
+
+esp_err_t pca9685_set_all_duty_cycle(pca9685_handle_t handle, double duty_cycle, double phase_delay) {
+    ESP_RETURN_ON_FALSE(duty_cycle <= 1, ESP_ERR_INVALID_ARG, TAG, "duty cycle must not be greater than 1");
+    ESP_RETURN_ON_FALSE(duty_cycle >= 0, ESP_ERR_INVALID_ARG, TAG, "duty cycle must be positive");
+    ESP_RETURN_ON_FALSE(phase_delay <= 1, ESP_ERR_INVALID_ARG, TAG, "phase delay must not be greater than 1");
+    ESP_RETURN_ON_FALSE(phase_delay >= 0, ESP_ERR_INVALID_ARG, TAG, "phase delay must be positive");
+
+    uint16_t on_counts, off_counts;
+    get_counts_from_duty_cycle(duty_cycle, phase_delay, &on_counts, &off_counts);
+
+    return set_all(handle, on_counts, off_counts);
+}
+
+esp_err_t pca9685_set_all_pulse_width(pca9685_handle_t handle, uint32_t pulse_width_us, uint32_t phase_shift_us) {
+    uint32_t freq;
+    esp_err_t err __attribute__((unused));
+    err = pca9685_get_freq(handle, &freq);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to read pca9685 frequency");
+    double period_us = (1 / ((double) freq)) * 1e6;
+
+    ESP_RETURN_ON_FALSE(pulse_width_us <= period_us, ESP_ERR_INVALID_ARG, TAG, "pulse width must be less than PWM period.");
+    ESP_RETURN_ON_FALSE(phase_shift_us <= period_us, ESP_ERR_INVALID_ARG, TAG, "phase shift must be less than PWM period.");
+
+    double duty_cycle = ((double) pulse_width_us) / period_us;
+    double phase_delay = ((double) phase_shift_us) / period_us;
+
+    return pca9685_set_all_duty_cycle(handle, duty_cycle, phase_delay);
+}
+
+esp_err_t pca9685_disable(pca9685_handle_t handle) {
     return set_bits(handle, MODE1, SLEEP);
 }
 
-esp_err_t pca9685_wake(pca9685_handle_t handle) {
+esp_err_t pca9685_enable(pca9685_handle_t handle) {
     return clear_bits(handle, MODE1, SLEEP);
 }
 
@@ -340,6 +320,8 @@ esp_err_t pca9685_use_extclk(pca9685_handle_t handle) {
     return ESP_OK;
 }
 
+
+// TODO: use enum
 esp_err_t pca9685_set_inverted(pca9685_handle_t handle) {
     return set_bits(handle, MODE2, INVRT);
 }
@@ -348,6 +330,7 @@ esp_err_t pca9685_set_not_inverted(pca9685_handle_t handle) {
     return clear_bits(handle, MODE2, INVRT);
 }
 
+// TODO: use enum
 esp_err_t pca9685_config_open_drain(pca9685_handle_t handle) {
     return clear_bits(handle, MODE2, OCH);
 }
