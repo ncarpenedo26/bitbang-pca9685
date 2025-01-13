@@ -30,6 +30,7 @@
         "xstring": "c",
         "xutility": "c",
         "i2c_master.h": "c",
-        "task.h": "c"
+        "task.h": "c",
+        "cstddef": "c"
     }
 }

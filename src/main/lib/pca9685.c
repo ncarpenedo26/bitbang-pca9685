@@ -61,7 +61,8 @@ typedef enum {
     INVRT = 1UL << 4,
     OCH = 1UL << 3,
     OUTDRV = 1UL << 2,
-    OUTNE = 3, // first 2 lsb
+    OUTNE_H = 1UL << 1,
+    OUTNE_L = 1UL,
 } MODE2_BITS;
 
 static const uint8_t DEFAULT_MODE1_CONFIG = AI | ALLCALL;
@@ -321,23 +322,7 @@ esp_err_t pca9685_use_extclk(pca9685_handle_t handle) {
 }
 
 
-// TODO: use enum
-esp_err_t pca9685_set_inverted(pca9685_handle_t handle) {
-    return set_bits(handle, MODE2, INVRT);
-}
 
-esp_err_t pca9685_set_not_inverted(pca9685_handle_t handle) {
-    return clear_bits(handle, MODE2, INVRT);
-}
-
-// TODO: use enum
-esp_err_t pca9685_config_open_drain(pca9685_handle_t handle) {
-    return clear_bits(handle, MODE2, OCH);
-}
-
-esp_err_t pca9685_config_totem_pole(pca9685_handle_t handle) {
-    return set_bits(handle, MODE2, OCH);
-}
 
 esp_err_t pca9685_enable_all_call(pca9685_handle_t handle, uint8_t all_call_addr) {
     esp_err_t err __attribute__((unused));
@@ -407,6 +392,48 @@ esp_err_t pca9685_disable_sub3(pca9685_handle_t handle) {
     return clear_bits(handle, MODE1, SUB3);
 }
 
-// get/set output driver mode
-// get/set channel update mode (OCH)
-// get/set OUTNE
+esp_err_t pca9685_config_inverted(pca9685_handle_t handle, PCA9685_OUTPUT_INVRT_MODE invrt) {
+    switch (invrt) {
+        case PCA9685_OUTPUT_INVERTED:
+            return set_bits(handle, MODE2, INVRT);
+        case PCA9685_OUTPUT_NORMAL:
+            return clear_bits(handle, MODE2, INVRT);
+    }
+    return ESP_OK;
+}
+
+esp_err_t pca9685_config_output_change(pca9685_handle_t handle, PCA9685_OUTPUT_CHANGE_MODE och) {
+    switch (och) {
+        case PCA9685_OUTPUT_CHANGE_ON_STOP:
+            return clear_bits(handle, MODE2, OCH);
+        case PCA9685_OUTPUT_CHANGE_ON_ACK:
+            return set_bits(handle, MODE2, OCH);
+    }
+    return ESP_OK;
+}
+
+esp_err_t pca9685_config_drive_mode(pca9685_handle_t handle, PCA9685_OUTPUT_DRIVE_MODE drive_mode) {
+    switch (drive_mode) {
+        case PCA9685_DRIVE_OPEN_DRAIN:
+            return clear_bits(handle, MODE2, OUTDRV);
+        case PCA9685_DRIVE_TOTEM_POLE:
+            return set_bits(handle, MODE2, OUTDRV);
+    }
+    return ESP_OK;
+}
+
+esp_err_t pca9685_config_output_disabled_mode(pca9685_handle_t handle, PCA9685_OUTPUT_NOT_ENABLED_MODE outne_mode) {
+    esp_err_t err __attribute__((unused));
+ 
+    switch (outne_mode) {
+        case PCA9685_DISABLED_LOW:
+            return clear_bits(handle, MODE2, OUTNE_L | OUTNE_H);
+        case PCA9685_DISABLED_HIGH:
+            err = clear_bits(handle, MODE2, OUTNE_H);
+            ESP_RETURN_ON_ERROR(err, TAG, "failed to set bits");
+            return set_bits(handle, MODE2, OUTNE_L);
+        case PCA9685_DISABLED_HIGH_IMPEDENCE:
+            return set_bits(handle, MODE2, OUTNE_H);
+    }
+    return ESP_OK;
+}
