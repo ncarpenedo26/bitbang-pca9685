@@ -313,7 +313,20 @@ esp_err_t pca9685_restart(pca9685_handle_t handle) {
     return ESP_OK;
 }
 
+esp_err_t pca9685_use_extclk(pca9685_handle_t handle) {
+    esp_err_t err __attribute__((unused));
 
+    err = set_bits(handle, MODE1, SLEEP);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to set bits");
+
+    err = set_bits(handle, MODE1, SLEEP | EXTCLK);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to set bits");
+    
+    err = clear_bits(handle, MODE1, SLEEP);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to set bits");
+    
+    return ESP_OK;
+}
 
 // get/set output driver mode
 // get/set output disabled mode

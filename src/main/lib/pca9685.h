@@ -27,5 +27,6 @@ esp_err_t set_all_off(pca9685_handle_t handle);
 esp_err_t pca9685_sleep(pca9685_handle_t handle);
 esp_err_t pca9685_wake(pca9685_handle_t handle);
 esp_err_t pca9685_restart(pca9685_handle_t handle);
+esp_err_t pca9685_use_extclk(pca9685_handle_t handle);
 
 #endif
