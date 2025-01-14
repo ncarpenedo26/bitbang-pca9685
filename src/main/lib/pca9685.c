@@ -1,15 +1,9 @@
 #include "pca9685.h"
 
-#include "driver/i2c_slave.h"
 #include "driver/i2c_master.h"
-#include "soc/gpio_reg.h"
-#include "esp_log.h"
-#include "esp_intr_alloc.h"
 #include "freertos/FreeRTOS.h"
 #include "esp_memory_utils.h"
-#include "freertos/idf_additions.h"
 #include "esp_types.h"
-#include "esp_attr.h"
 #include "esp_check.h"
 
 #define NUM_CHANNELS 16
