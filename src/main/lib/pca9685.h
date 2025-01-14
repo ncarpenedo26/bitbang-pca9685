@@ -4,32 +4,38 @@
 #include "driver/i2c_slave.h"
 #include "driver/i2c_master.h"
 
+#define PCA9685_DEFAULT_I2C_ADDR      0x40
 #define PCA9685_DEFAULT_ALLCALLADR    0xE0
 #define PCA9685_DEFAULT_SUB1ADR       0xE2
 #define PCA9685_DEFAULT_SUB2ADR       0xE4
 #define PCA9685_DEFAULT_SUB3ADR       0xE8
 
+// Device State
 typedef struct pca9685_dev {
     i2c_master_dev_handle_t i2c_handle;
 } pca9685_dev_t;
 
 typedef pca9685_dev_t* pca9685_handle_t;
 
+// Invert output logic state
 typedef enum {
     PCA9685_OUTPUT_NORMAL = 0,
     PCA9685_OUTPUT_INVERTED = 1,
 } PCA9685_OUTPUT_INVRT_MODE;
 
+// Output drive mode
 typedef enum {
     PCA9685_DRIVE_OPEN_DRAIN = 0,
     PCA9685_DRIVE_TOTEM_POLE = 1,
 } PCA9685_OUTPUT_DRIVE_MODE;
 
+// Set when outputs change from i2c transmission
 typedef enum {
     PCA9685_OUTPUT_CHANGE_ON_STOP = 0,
     PCA9685_OUTPUT_CHANGE_ON_ACK = 1,
 } PCA9685_OUTPUT_CHANGE_MODE;
 
+// Output state when !OE pin HIGH
 typedef enum {
     PCA9685_DISABLED_LOW = 0,
     PCA9685_DISABLED_HIGH = 1,
