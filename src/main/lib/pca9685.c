@@ -90,11 +90,13 @@ static esp_err_t i2c_read_reg(i2c_master_dev_handle_t handle, const uint8_t reg,
  * @return success or failure
  */
 static esp_err_t set_bits(pca9685_handle_t handle, uint8_t reg, uint8_t mask) {
+    // Read current contents of register
     uint8_t reg_status;
     esp_err_t err __attribute__((unused));
     err = i2c_read_reg(handle->i2c_handle, reg, &reg_status);
     ESP_RETURN_ON_ERROR(err, TAG, "failed to read reg %x", reg);
 
+    // Write logic high for masked bits, leaving other bits unmodified
     reg_status |= mask;
     uint8_t buffer[2] = {reg, reg_status};
     err = i2c_master_transmit(handle->i2c_handle, buffer, 2, DEFAULT_TIMEOUT);
@@ -110,11 +112,13 @@ static esp_err_t set_bits(pca9685_handle_t handle, uint8_t reg, uint8_t mask) {
  * @return success or failure
  */
 static esp_err_t clear_bits(pca9685_handle_t handle, uint8_t reg, uint8_t mask) {
+    // Read current contents of register
     uint8_t reg_status;
     esp_err_t err __attribute__((unused));
     err = i2c_read_reg(handle->i2c_handle, reg, &reg_status);
     ESP_RETURN_ON_ERROR(err, TAG, "failed to read reg %x", reg);
 
+    // Clear only bits specified by mask
     reg_status &= ~mask;
     uint8_t buffer[2] = {reg, reg_status};
     err = i2c_master_transmit(handle->i2c_handle, buffer, 2, DEFAULT_TIMEOUT);
@@ -130,6 +134,8 @@ static esp_err_t clear_bits(pca9685_handle_t handle, uint8_t reg, uint8_t mask) 
 static uint8_t freq_to_prescale(uint32_t freq) {
     assert(freq <= PWM_FREQ_MAX);
     assert(freq >= PWM_FREQ_MIN);
+
+    // Calculation from datasheet 7.3.1
     return INTERNAL_CLOCK_FREQ / (MAX_COUNT * freq) - 1;
 }
 
@@ -140,6 +146,8 @@ static uint8_t freq_to_prescale(uint32_t freq) {
 static uint32_t prescale_to_freq(uint8_t prescale) {
     assert(prescale >= PRE_SCALE_MIN);
     assert(prescale <= PRE_SCALE_MAX);
+
+    // Calculation from datasheet 7.3.1
     return INTERNAL_CLOCK_FREQ / (MAX_COUNT * (prescale + 1));
 }
 
@@ -149,6 +157,11 @@ static uint32_t prescale_to_freq(uint8_t prescale) {
  */
 static uint8_t pca9685_channel_to_base_reg(uint32_t channel) {
     assert(channel < NUM_CHANNELS);
+
+    // LED0_ON_L is effectively the base reg
+    // Each LED channel has 4 corresponding registers
+    //      (LEDX_ON_L, LEDX_ON_H, LEDX_OFF_L, LEDX_OFF_H)
+    // So we have an offset of channel * 4 registers
     return LED0_ON_L + (channel * 0x4);
 }
 
@@ -164,6 +177,7 @@ static void get_counts_from_duty_cycle(double duty_cycle, double phase_delay, ui
     assert(phase_delay <= 1);
     assert(phase_delay >= 0);
 
+    // See section 7.3.3 for additional details
     *on_counts = (uint16_t)(phase_delay * MAX_COUNT) % 4096;
     *off_counts = (uint16_t)(duty_cycle * MAX_COUNT + phase_delay * MAX_COUNT) % 4096;
 }
@@ -175,13 +189,17 @@ static void get_counts_from_duty_cycle(double duty_cycle, double phase_delay, ui
  * @return success or failure
  */
 esp_err_t pca9685_init(i2c_master_bus_handle_t bus_handle, const i2c_device_config_t *dev_config, pca9685_handle_t *ret_handle) {
+    // Allocate space for device state struct
     pca9685_dev_t *pca9685_dev = heap_caps_calloc(1, sizeof(pca9685_dev_t), MALLOC_CAP_DEFAULT);
     ESP_RETURN_ON_FALSE((bus_handle != NULL), ESP_ERR_NO_MEM, TAG, "insufficient memory for pca9685");
 
     esp_err_t err __attribute__((unused));
+
+    // Add device to bus
     err = i2c_master_bus_add_device(bus_handle, dev_config, &pca9685_dev->i2c_handle);
     ESP_RETURN_ON_ERROR(err, TAG, "failed to add pca9685 to i2c bus");
     
+    // Write default MODE1 config
     uint8_t init_data[2] = {MODE1, DEFAULT_MODE1_CONFIG};
     err = i2c_master_transmit(pca9685_dev->i2c_handle, init_data, 2, DEFAULT_TIMEOUT);
     ESP_RETURN_ON_ERROR(err, TAG, "failed to configure pca9685");
@@ -388,11 +406,14 @@ esp_err_t pca9685_set_all_pulse_width(pca9685_handle_t handle, uint32_t pulse_wi
     esp_err_t err __attribute__((unused));
     err = pca9685_get_freq(handle, &freq);
     ESP_RETURN_ON_ERROR(err, TAG, "failed to read pca9685 frequency");
+
+    // Calculate PWM period for current frequency
     double period_us = (1 / ((double) freq)) * 1e6;
 
     ESP_RETURN_ON_FALSE(pulse_width_us <= period_us, ESP_ERR_INVALID_ARG, TAG, "pulse width must be less than PWM period.");
     ESP_RETURN_ON_FALSE(phase_shift_us <= period_us, ESP_ERR_INVALID_ARG, TAG, "phase shift must be less than PWM period.");
 
+    // Convert pulse width to duty cycle
     double duty_cycle = ((double) pulse_width_us) / period_us;
     double phase_delay = ((double) phase_shift_us) / period_us;
 
@@ -421,9 +442,11 @@ esp_err_t pca9685_enable(pca9685_handle_t handle) {
  *  @returns success or failure 
  */
 esp_err_t pca9685_restart(pca9685_handle_t handle) {
+    // Restart procedure explained in section 7.3.1 of the documentation
     uint8_t mode1_status;
     esp_err_t err __attribute__((unused));
 
+    // Read MODE1 reg and check that the restart bit is high
     err = i2c_read_reg(handle->i2c_handle, MODE1, &mode1_status);
     ESP_RETURN_ON_ERROR(err, TAG, "failed to read pca9685");
 
@@ -432,11 +455,14 @@ esp_err_t pca9685_restart(pca9685_handle_t handle) {
         return ESP_OK;
     }
 
+    // Clear the sleep bit to re-enable PWM
     err = clear_bits(handle, MODE1, SLEEP);
     ESP_RETURN_ON_ERROR(err, TAG, "failed to clear sleep bit");
 
+    // We must wait for at least 500us after clearing SLEEP
     vTaskDelay(1 / portTICK_PERIOD_MS);
    
+    // Write 1 to RESTART to reset device to pre-sleep state
     err = set_bits(handle, MODE1, RESTART);
     ESP_RETURN_ON_ERROR(err, TAG, "failed to restart pca9685");
 
@@ -451,12 +477,16 @@ esp_err_t pca9685_restart(pca9685_handle_t handle) {
 esp_err_t pca9685_use_extclk(pca9685_handle_t handle) {
     esp_err_t err __attribute__((unused));
 
+    // Must disable PWM before enabling external clock
     err = set_bits(handle, MODE1, SLEEP);
     ESP_RETURN_ON_ERROR(err, TAG, "failed to set bits");
 
+    // Write logic 1 to both SLEEP and EXTCLK to switch
+    // See 7.3.1
     err = set_bits(handle, MODE1, SLEEP | EXTCLK);
     ESP_RETURN_ON_ERROR(err, TAG, "failed to set bits");
 
+    // Wake the device after external clock is enabled
     err = clear_bits(handle, MODE1, SLEEP);
     ESP_RETURN_ON_ERROR(err, TAG, "failed to set bits");
     
@@ -471,9 +501,11 @@ esp_err_t pca9685_use_extclk(pca9685_handle_t handle) {
 esp_err_t pca9685_enable_all_call(pca9685_handle_t handle, uint8_t all_call_addr) {
     esp_err_t err __attribute__((unused));
 
+    // Enable device response to all call
     err = set_bits(handle, MODE1, ALLCALL);
     ESP_RETURN_ON_ERROR(err, TAG, "failed to set bits");
 
+    // Set all call address register to user specified address
     uint8_t buffer[2] = {ALLCALLADR, all_call_addr};
     err = i2c_master_transmit(handle->i2c_handle, buffer, 2, DEFAULT_TIMEOUT);
     ESP_RETURN_ON_ERROR(err, TAG, "failed to write address");
@@ -632,3 +664,7 @@ esp_err_t pca9685_config_output_disabled_mode(pca9685_handle_t handle, PCA9685_O
     }
     return ESP_OK;
 }
+
+// TODO: Add additional get() methods
+
+// TODO: Add software reset function
